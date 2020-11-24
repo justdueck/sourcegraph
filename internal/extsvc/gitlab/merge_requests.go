@@ -50,6 +50,7 @@ type MergeRequest struct {
 	// to do it the old fashioned way with lots of REST requests.
 	Notes     []*Note
 	Pipelines []*Pipeline
+	Events    []*ResourceStateEvent
 }
 
 // SetWIP ensures a "WIP:" prefix on the given title. If a "Draft:" prefix is found, that one is retained instead.
