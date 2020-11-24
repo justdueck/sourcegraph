@@ -10,17 +10,17 @@ import { SearchPatternType } from '../graphql-operations'
 // until it is no longer a proof of concept and instead works well.
 
 export type SearchEvent =
-    | { type: 'filematches'; data: FileMatch[] }
-    | { type: 'repomatches'; data: RepositoryMatch[] }
-    | { type: 'commitmatches'; data: CommitMatch[] }
-    | { type: 'symbolmatches'; data: FileSymbolMatch[] }
+    | { type: 'matches'; data: Match[] }
     | { type: 'progress'; data: Progress }
     | { type: 'filters'; data: Filter[] }
     | { type: 'alert'; data: Alert }
     | { type: 'error'; data: Error }
     | { type: 'done'; data: {} }
 
+type Match = FileMatch | RepositoryMatch | CommitMatch | FileSymbolMatch
+
 interface FileMatch {
+    type: 'file'
     name: string
     repository: string
     branches?: string[]
@@ -34,7 +34,8 @@ interface LineMatch {
     offsetAndLengths: number[][]
 }
 
-interface FileSymbolMatch extends Omit<FileMatch, 'lineMatches'> {
+interface FileSymbolMatch extends Omit<FileMatch, 'lineMatches' | 'type'> {
+    type: 'symbol'
     symbols: SymbolMatch[]
 }
 
@@ -54,6 +55,7 @@ type MarkdownText = string
  * @see GQL.IGenericSearchResultInterface
  */
 interface CommitMatch {
+    type: 'commit'
     icon: string
     label: MarkdownText
     url: string
@@ -290,38 +292,19 @@ const emptyAggregateResults: AggregateStreamingSearchResults = {
     },
 }
 
+function toGQLSearchResult(match: Match): GQL.SearchResult {}
+
 /**
  * Converts a stream of SearchEvents into AggregateStreamingSearchResults
  */
 const switchAggregateSearchResults: OperatorFunction<SearchEvent, AggregateStreamingSearchResults> = pipe(
     scan((results: AggregateStreamingSearchResults, newEvent: SearchEvent) => {
         switch (newEvent.type) {
-            case 'filematches':
+            case 'matches':
                 return {
                     ...results,
-                    // File matches are additive
-                    results: results.results.concat(newEvent.data.map(toGQLFileMatch)),
-                }
-
-            case 'repomatches':
-                return {
-                    ...results,
-                    // Repository matches are additive
-                    results: results.results.concat(newEvent.data.map(toGQLRepositoryMatch)),
-                }
-
-            case 'commitmatches':
-                return {
-                    ...results,
-                    // Commit matches are additive
-                    results: results.results.concat(newEvent.data.map(toGQLCommitMatch)),
-                }
-
-            case 'symbolmatches':
-                return {
-                    ...results,
-                    // Symbol matches are additive
-                    results: results.results.concat(newEvent.data.map(toGQLSymbolMatch)),
+                    // Matches are additive
+                    results: results.results.concat(newEvent.data.map(toGQLSearchResult)),
                 }
 
             case 'progress':
