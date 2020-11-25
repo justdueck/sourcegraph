@@ -70,9 +70,10 @@ func (r *campaignSpecResolver) ChangesetSpecs(ctx context.Context, args *graphql
 	}
 
 	return &changesetSpecConnectionResolver{
-		store:       r.store,
-		httpFactory: r.httpFactory,
-		opts:        opts,
+		store:        r.store,
+		httpFactory:  r.httpFactory,
+		campaignSpec: r.campaignSpec,
+		opts:         opts,
 	}, nil
 }
 
@@ -154,8 +155,9 @@ func (r *campaignDescriptionResolver) Description() string {
 
 func (r *campaignSpecResolver) DiffStat(ctx context.Context) (*graphqlbackend.DiffStat, error) {
 	specsConnection := &changesetSpecConnectionResolver{
-		store:       r.store,
-		httpFactory: r.httpFactory,
+		store:        r.store,
+		httpFactory:  r.httpFactory,
+		campaignSpec: r.campaignSpec,
 		opts: ee.ListChangesetSpecsOpts{
 			CampaignSpecID: r.campaignSpec.ID,
 		},

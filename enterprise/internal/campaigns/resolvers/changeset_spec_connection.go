@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/pkg/errors"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	ee "github.com/sourcegraph/sourcegraph/enterprise/internal/campaigns"
@@ -18,8 +19,9 @@ import (
 var _ graphqlbackend.ChangesetSpecConnectionResolver = &changesetSpecConnectionResolver{}
 
 type changesetSpecConnectionResolver struct {
-	store       *ee.Store
-	httpFactory *httpcli.Factory
+	store        *ee.Store
+	httpFactory  *httpcli.Factory
+	campaignSpec *campaigns.CampaignSpec
 
 	opts ee.ListChangesetSpecsOpts
 
@@ -62,6 +64,32 @@ func (r *changesetSpecConnectionResolver) Nodes(ctx context.Context) ([]graphqlb
 		return nil, err
 	}
 
+	svc := ee.NewService(r.store, r.httpFactory)
+	campaign, err := svc.GetCampaignMatchingCampaignSpec(ctx, r.campaignSpec)
+	if err != nil {
+		return nil, err
+	}
+	var campaignID int64 = 0
+	if campaign != nil {
+		campaignID = campaign.ID
+	}
+	mappings, err := r.store.GetRewirerMappings(ctx, ee.GetRewirerMappingsOpts{CampaignSpecID: r.campaignSpec.ID, CampaignID: campaignID})
+	if err != nil {
+		return nil, err
+	}
+	err = mappings.Hydrate(ctx, r.store)
+	if err != nil {
+		return nil, err
+	}
+
+	mappingByID := make(map[int64]*ee.RewirerMapping)
+	for _, m := range mappings {
+		if m.ChangesetSpecID == 0 {
+			continue
+		}
+		mappingByID[m.ChangesetSpecID] = m
+	}
+
 	resolvers := make([]graphqlbackend.ChangesetSpecResolver, 0, len(changesetSpecs))
 	for _, c := range changesetSpecs {
 		repo := reposByID[c.RepoID]
@@ -70,7 +98,12 @@ func (r *changesetSpecConnectionResolver) Nodes(ctx context.Context) ([]graphqlb
 		// In that case we'll set it anyway to nil and changesetSpecResolver
 		// will treat it as "hidden".
 
-		resolvers = append(resolvers, NewChangesetSpecResolverWithRepo(r.store, r.httpFactory, repo, c))
+		mapping, ok := mappingByID[c.ID]
+		if !ok {
+			return nil, errors.New("couldn't find mapping for changeset")
+		}
+
+		resolvers = append(resolvers, NewChangesetSpecResolverWithRepo(r.store, r.httpFactory, repo, c).WithRewirerMapping(mapping))
 	}
 
 	return resolvers, nil

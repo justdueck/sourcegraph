@@ -33,6 +33,8 @@ type changesetSpecResolver struct {
 
 	changesetSpec *campaigns.ChangesetSpec
 
+	mapping *ee.RewirerMapping
+
 	repo *types.Repo
 }
 
@@ -66,6 +68,11 @@ func NewChangesetSpecResolverWithRepo(store *ee.Store, cf *httpcli.Factory, repo
 		repo:          repo,
 		changesetSpec: changesetSpec,
 	}
+}
+
+func (r *changesetSpecResolver) WithRewirerMapping(mapping *ee.RewirerMapping) *changesetSpecResolver {
+	r.mapping = mapping
+	return r
 }
 
 func (r *changesetSpecResolver) ID() graphql.ID {
@@ -111,8 +118,33 @@ func (r *changesetSpecResolver) Delta() (graphqlbackend.ChangesetSpecDeltaResolv
 	return &changesetSpecDeltaResolver{}, nil
 }
 
-func (r *changesetSpecResolver) Changeset() (graphqlbackend.ChangesetResolver, error) {
-	return nil, nil
+func (r *changesetSpecResolver) Changeset(ctx context.Context) (graphqlbackend.ChangesetResolver, error) {
+	if r.mapping == nil {
+		svc := ee.NewService(r.store, r.httpFactory)
+		campaignSpec, err := r.store.GetCampaignSpec(ctx, ee.GetCampaignSpecOpts{ID: r.changesetSpec.CampaignSpecID})
+		if err != nil {
+			return nil, err
+		}
+		campaign, err := svc.GetCampaignMatchingCampaignSpec(ctx, campaignSpec)
+		var campaignID int64 = 0
+		if err != nil {
+			return nil, err
+		}
+		if campaign != nil {
+			campaignID = campaign.ID
+		}
+		mappings, err := r.store.GetRewirerMappings(ctx, ee.GetRewirerMappingsOpts{CampaignSpecID: r.changesetSpec.CampaignSpecID, CampaignID: campaignID})
+		if err != nil {
+			return nil, err
+		}
+		if err := mappings.Hydrate(ctx, r.store); err != nil {
+			return nil, err
+		}
+	}
+	if r.mapping.Changeset == nil {
+		return nil, nil
+	}
+	return NewChangesetResolver(r.store, r.httpFactory, r.mapping.Changeset, r.repo), nil
 }
 
 func (r *changesetSpecResolver) repoAccessible() bool {

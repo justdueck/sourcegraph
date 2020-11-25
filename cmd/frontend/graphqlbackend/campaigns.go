@@ -168,7 +168,7 @@ type ChangesetSpecResolver interface {
 
 	Operations() ([]campaigns.ReconcilerOperation, error)
 	Delta() (ChangesetSpecDeltaResolver, error)
-	Changeset() (ChangesetResolver, error)
+	Changeset(ctx context.Context) (ChangesetResolver, error)
 
 	ToHiddenChangesetSpec() (HiddenChangesetSpecResolver, bool)
 	ToVisibleChangesetSpec() (VisibleChangesetSpecResolver, bool)
