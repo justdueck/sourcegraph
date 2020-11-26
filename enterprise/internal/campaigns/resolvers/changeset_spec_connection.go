@@ -19,11 +19,11 @@ import (
 var _ graphqlbackend.ChangesetSpecConnectionResolver = &changesetSpecConnectionResolver{}
 
 type changesetSpecConnectionResolver struct {
-	store        *ee.Store
-	httpFactory  *httpcli.Factory
-	campaignSpec *campaigns.CampaignSpec
+	store       *ee.Store
+	httpFactory *httpcli.Factory
 
-	opts ee.ListChangesetSpecsOpts
+	opts         ee.ListChangesetSpecsOpts
+	mappingsOpts ee.GetRewirerMappingsOpts
 
 	// Cache results because they are used by multiple fields
 	once           sync.Once
@@ -64,30 +64,9 @@ func (r *changesetSpecConnectionResolver) Nodes(ctx context.Context) ([]graphqlb
 		return nil, err
 	}
 
-	svc := ee.NewService(r.store, r.httpFactory)
-	campaign, err := svc.GetCampaignMatchingCampaignSpec(ctx, r.campaignSpec)
-	if err != nil {
-		return nil, err
-	}
-	var campaignID int64 = 0
-	if campaign != nil {
-		campaignID = campaign.ID
-	}
-	mappings, err := r.store.GetRewirerMappings(ctx, ee.GetRewirerMappingsOpts{CampaignSpecID: r.campaignSpec.ID, CampaignID: campaignID})
-	if err != nil {
-		return nil, err
-	}
-	err = mappings.Hydrate(ctx, r.store)
-	if err != nil {
-		return nil, err
-	}
-
-	mappingByID := make(map[int64]*ee.RewirerMapping)
-	for _, m := range mappings {
-		if m.ChangesetSpecID == 0 {
-			continue
-		}
-		mappingByID[m.ChangesetSpecID] = m
+	fetcher := &changesetSpecConnectionMappingFetcher{
+		store: r.store,
+		opts:  r.mappingsOpts,
 	}
 
 	resolvers := make([]graphqlbackend.ChangesetSpecResolver, 0, len(changesetSpecs))
@@ -98,12 +77,7 @@ func (r *changesetSpecConnectionResolver) Nodes(ctx context.Context) ([]graphqlb
 		// In that case we'll set it anyway to nil and changesetSpecResolver
 		// will treat it as "hidden".
 
-		mapping, ok := mappingByID[c.ID]
-		if !ok {
-			return nil, errors.New("couldn't find mapping for changeset")
-		}
-
-		resolvers = append(resolvers, NewChangesetSpecResolverWithRepo(r.store, r.httpFactory, repo, c).WithRewirerMapping(mapping))
+		resolvers = append(resolvers, NewChangesetSpecResolverWithRepo(r.store, r.httpFactory, repo, c).WithRewirerMappingFetcher(fetcher))
 	}
 
 	return resolvers, nil
@@ -122,4 +96,49 @@ func (r *changesetSpecConnectionResolver) compute(ctx context.Context) (campaign
 	})
 
 	return r.changesetSpecs, r.reposByID, r.next, r.err
+}
+
+type changesetSpecConnectionMappingFetcher struct {
+	store *ee.Store
+	opts  ee.GetRewirerMappingsOpts
+
+	once        sync.Once
+	mappingByID map[int64]*ee.RewirerMapping
+	err         error
+}
+
+func (cscmf *changesetSpecConnectionMappingFetcher) ForChangesetSpec(ctx context.Context, id int64) (*ee.RewirerMapping, error) {
+	mappingByID, err := cscmf.compute(ctx)
+	if err != nil {
+		return nil, err
+	}
+	mapping, ok := mappingByID[id]
+	if !ok {
+		return nil, errors.New("couldn't find mapping for changeset")
+	}
+
+	return mapping, nil
+}
+
+func (cscmf *changesetSpecConnectionMappingFetcher) compute(ctx context.Context) (map[int64]*ee.RewirerMapping, error) {
+	cscmf.once.Do(func() {
+		mappings, err := cscmf.store.GetRewirerMappings(ctx, cscmf.opts)
+		if err != nil {
+			cscmf.err = err
+			return
+		}
+		if err := mappings.Hydrate(ctx, cscmf.store); err != nil {
+			cscmf.err = err
+			return
+		}
+
+		cscmf.mappingByID = make(map[int64]*ee.RewirerMapping)
+		for _, m := range mappings {
+			if m.ChangesetSpecID == 0 {
+				continue
+			}
+			cscmf.mappingByID[m.ChangesetSpecID] = m
+		}
+	})
+	return cscmf.mappingByID, cscmf.err
 }

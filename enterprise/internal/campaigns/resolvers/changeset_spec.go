@@ -5,6 +5,7 @@ import (
 
 	"github.com/graph-gophers/graphql-go"
 	"github.com/graph-gophers/graphql-go/relay"
+	"github.com/pkg/errors"
 	"github.com/sourcegraph/go-diff/diff"
 
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend"
@@ -33,7 +34,7 @@ type changesetSpecResolver struct {
 
 	changesetSpec *campaigns.ChangesetSpec
 
-	mapping *ee.RewirerMapping
+	mappingFetcher *changesetSpecConnectionMappingFetcher
 
 	repo *types.Repo
 }
@@ -70,8 +71,8 @@ func NewChangesetSpecResolverWithRepo(store *ee.Store, cf *httpcli.Factory, repo
 	}
 }
 
-func (r *changesetSpecResolver) WithRewirerMapping(mapping *ee.RewirerMapping) *changesetSpecResolver {
-	r.mapping = mapping
+func (r *changesetSpecResolver) WithRewirerMappingFetcher(mappingFetcher *changesetSpecConnectionMappingFetcher) *changesetSpecResolver {
+	r.mappingFetcher = mappingFetcher
 	return r
 }
 
@@ -119,7 +120,7 @@ func (r *changesetSpecResolver) Delta() (graphqlbackend.ChangesetSpecDeltaResolv
 }
 
 func (r *changesetSpecResolver) Changeset(ctx context.Context) (graphqlbackend.ChangesetResolver, error) {
-	if r.mapping == nil {
+	if r.mappingFetcher == nil {
 		svc := ee.NewService(r.store, r.httpFactory)
 		campaignSpec, err := r.store.GetCampaignSpec(ctx, ee.GetCampaignSpecOpts{ID: r.changesetSpec.CampaignSpecID})
 		if err != nil {
@@ -140,11 +141,24 @@ func (r *changesetSpecResolver) Changeset(ctx context.Context) (graphqlbackend.C
 		if err := mappings.Hydrate(ctx, r.store); err != nil {
 			return nil, err
 		}
+		for _, m := range mappings {
+			if m.ChangesetSpecID == r.changesetSpec.ID {
+				if m.Changeset == nil {
+					return nil, nil
+				}
+				return NewChangesetResolver(r.store, r.httpFactory, m.Changeset, r.repo), nil
+			}
+		}
+		return nil, errors.New("mapping not found, this should not happen")
 	}
-	if r.mapping.Changeset == nil {
+	mapping, err := r.mappingFetcher.ForChangesetSpec(ctx, r.changesetSpec.ID)
+	if err != nil {
+		return nil, err
+	}
+	if mapping.Changeset == nil {
 		return nil, nil
 	}
-	return NewChangesetResolver(r.store, r.httpFactory, r.mapping.Changeset, r.repo), nil
+	return NewChangesetResolver(r.store, r.httpFactory, mapping.Changeset, r.repo), nil
 }
 
 func (r *changesetSpecResolver) repoAccessible() bool {

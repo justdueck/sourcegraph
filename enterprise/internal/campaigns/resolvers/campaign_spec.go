@@ -39,6 +39,10 @@ type campaignSpecResolver struct {
 	namespaceOnce sync.Once
 	namespace     *graphqlbackend.NamespaceResolver
 	namespaceErr  error
+
+	campaignOnce sync.Once
+	campaign     *campaigns.Campaign
+	campaignErr  error
 }
 
 func (r *campaignSpecResolver) ID() graphql.ID {
@@ -69,11 +73,23 @@ func (r *campaignSpecResolver) ChangesetSpecs(ctx context.Context, args *graphql
 		opts.Cursor = int64(id)
 	}
 
+	campaign, err := r.computeCampaign(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var campaignID int64 = 0
+	if campaign != nil {
+		campaignID = campaign.ID
+	}
+
 	return &changesetSpecConnectionResolver{
-		store:        r.store,
-		httpFactory:  r.httpFactory,
-		campaignSpec: r.campaignSpec,
-		opts:         opts,
+		store:       r.store,
+		httpFactory: r.httpFactory,
+		opts:        opts,
+		mappingsOpts: ee.GetRewirerMappingsOpts{
+			CampaignSpecID: r.campaignSpec.ID,
+			CampaignID:     campaignID,
+		},
 	}, nil
 }
 
@@ -155,9 +171,8 @@ func (r *campaignDescriptionResolver) Description() string {
 
 func (r *campaignSpecResolver) DiffStat(ctx context.Context) (*graphqlbackend.DiffStat, error) {
 	specsConnection := &changesetSpecConnectionResolver{
-		store:        r.store,
-		httpFactory:  r.httpFactory,
-		campaignSpec: r.campaignSpec,
+		store:       r.store,
+		httpFactory: r.httpFactory,
 		opts: ee.ListChangesetSpecsOpts{
 			CampaignSpecID: r.campaignSpec.ID,
 		},
@@ -187,6 +202,14 @@ func (r *campaignSpecResolver) DiffStat(ctx context.Context) (*graphqlbackend.Di
 	}
 
 	return totalStat, nil
+}
+
+func (r *campaignSpecResolver) computeCampaign(ctx context.Context) (*campaigns.Campaign, error) {
+	r.campaignOnce.Do(func() {
+		svc := ee.NewService(r.store, r.httpFactory)
+		r.campaign, r.campaignErr = svc.GetCampaignMatchingCampaignSpec(ctx, r.campaignSpec)
+	})
+	return r.campaign, r.campaignErr
 }
 
 func (r *campaignSpecResolver) AppliesToCampaign(ctx context.Context) (graphqlbackend.CampaignResolver, error) {
